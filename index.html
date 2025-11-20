@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Neon Pulse Platformer - Energy Hunt!</title>
+  <style>
+    body {
+      margin:0; overflow:hidden; background:linear-gradient(135deg,#2b064d,#12c2e9 80%);
+      font-family:'Orbitron',sans-serif;
+    }
+    #overlay {
+      position:fixed;top:0;left:0;width:100vw;height:100vh;
+      background:rgba(20,10,40,0.96);color:#fff;z-index:10;
+      display:flex;flex-direction:column;justify-content:center;align-items:center;
+    }
+    #overlay h1 {font-size:3em;color:#ff00cc;text-shadow:0 0 16px #0ff;}
+    #overlay p, #overlay ul {max-width:320px;font-size:1.2em;}
+    .btn {background:#0ff;border:none;color:#222;font-size:1.2em;padding:0.6em 2em;margin-top:1.8em;border-radius:999px;cursor:pointer;box-shadow:0 0 24px #ff00cc;}
+    #ui {position:fixed;top:16px;left:16px;z-index:9;font-size:1.2em;color:#fff;text-shadow:0 0 12px #ff00cc;}
+    #touch-controls {display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:20;}
+    .touch-btn {background:#ff00cc50;border:none;width:72px;height:72px;margin:8px;border-radius:50%;font-size:2em;color:#fff;}
+    @media (max-width:600px){#touch-controls{display:flex;}}
+  </style>
+</head>
+<body>
+  <div id="overlay">
+    <h1>Neon Pulse Platformer</h1>
+    <p>Collect <span style="color:#0ff;">plasma tokens</span>, dodge hazards, and chase your highest neon score!</p>
+    <ul>
+      <li>Arrow keys/WASD: Move/jump</li>
+      <li>Space: Slow-mo Pulse</li>
+      <li>Touch: On-screen buttons</li>
+      <li>Avoid hazards, collect tokens, survive for points!</li>
+    </ul>
+    <button class="btn" onclick="startGame()">Start Neon Hunt!</button>
+  </div>
+  <div id="ui"></div>
+  <div id="touch-controls">
+    <button class="touch-btn" id="btn-left">&#8592;</button>
+    <button class="touch-btn" id="btn-right">&#8594;</button>
+    <button class="touch-btn" id="btn-jump">&#8593;</button>
+  </div>
+  <script src="https://unpkg.com/three@0.157.0/build/three.min.js"></script>
+  <script>
+  // ====== Core Variables & Modular GameLogic ======
+  let renderer, scene, camera, player, tokens=[], obstacles=[], score=0, health=100, gameActive=false;
+  const settings={
+    neonColors:["#240046","#ff00cc","#00ffe7","#ffbf00","#8229ff"],
+    gravity:-0.75, jumpVel:1.8, moveSpeed:0.17, slowmoCharge:3
+  };
+
+  // Startup: Show splash, build scene when "Start"
+  function startGame() {
+    document.getElementById('overlay').style.display='none';
+    init();
+  }
+
+  function init(){
+    // Renderer/canvas
+    renderer=new THREE.WebGLRenderer({antialias:true});
+    renderer.setSize(window.innerWidth,window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Scene/cam
+    scene=new THREE.Scene();
+    scene.background=new THREE.Color(settings.neonColors[0]);
+    camera=new THREE.PerspectiveCamera(60,window.innerWidth/window.innerHeight,0.1,100);
+    camera.position.set(0,3,10);
+
+    // Neon grid/floor SVG module
+    let gridGeom=new THREE.PlaneGeometry(24,14); 
+    let gridMat=new THREE.MeshBasicMaterial({color:settings.neonColors[2],transparent:true,opacity:0.35});
+    let grid=new THREE.Mesh(gridGeom,gridMat); grid.position.set(0,-0.8,0);
+    scene.add(grid);
+
+    // Mod: Add platforms
+    addPlatforms();
+
+    // Player
+    let playerGeom=new THREE.BoxGeometry(0.6,0.9,0.6);
+    let playerMat=new THREE.MeshPhongMaterial({color:settings.neonColors[1],emissive:settings.neonColors[2]});
+    player=new THREE.Mesh(playerGeom,playerMat);
+    player.position.set(0,-0.1,1);
+    scene.add(player);
+
+    // Lights
+    let light=new THREE.PointLight(settings.neonColors[2],1,14);light.position.set(0,8,2);scene.add(light);
+
+    // Coins/tokens
+    for(let i=0;i<12;i++){addToken(-6+Math.random()*12,Math.random()*2.4+.7);}
+    for(let i=0;i<6;i++){addObstacle(-7+Math.random()*14,Math.random()*2.5+.8);}
+
+    updateUI();
+    animate();
+    gameActive=true;
+  }
+
+  // Platform module: Add rectangles/platforms for player to run/jump
+  function addPlatforms(){
+    for(let i=0;i<8;i++){
+      let platGeom=new THREE.BoxGeometry(2.3,0.2,0.5);
+      let platMat=new THREE.MeshStandardMaterial({color:settings.neonColors[4],emissive:settings.neonColors[3],metalness:0.7});
+      let plat=new THREE.Mesh(platGeom,platMat);
+      plat.position.set(-8+i*2.2,(i%2==0?.6:1.4),i*0.1-1);
+      scene.add(plat);
+    }
+  }
+
+  // Modular token/coin module (SVG-style disc)
+  function addToken(x,y){
+    let tokenGeom=new THREE.CylinderGeometry(0.28,0.28,0.14,32);
+    let tokenMat=new THREE.MeshPhongMaterial({color:"#00ffe7",emissive:"#240046"});
+    let token=new THREE.Mesh(tokenGeom,tokenMat);
+    token.position.set(x,y,0.6);
+    tokens.push(token); scene.add(token);
+  }
+
+  // Modular obstacle/spike/robot
+  function addObstacle(x,y){
+    let obGeom=new THREE.ConeGeometry(0.25,0.7,12);
+    let obMat=new THREE.MeshPhongMaterial({color:"#ffbf00",emissive:"#ff00cc"});
+    let ob=new THREE.Mesh(obGeom,obMat);
+    ob.position.set(x,y,1.1);
+    obstacles.push(ob); scene.add(ob);
+  }
+
+  // Animate/player movement & collision
+  let velY=0, slowmo=false, slowmoLeft=settings.slowmoCharge;
+  function animate(){
+    if(!gameActive)return;
+    requestAnimationFrame(animate);
+    // Gravity/jump
+    velY+=settings.gravity*0.037*(slowmo?0.3:1);
+    player.position.y+=velY*0.095*(slowmo?0.3:1);
+
+    // Boundaries
+    if(player.position.y<-0.1){player.position.y=-0.1;velY=0;}
+    // Simple collision: tokens
+    tokens.forEach((t,i)=>{
+      if(t.visible && player.position.distanceTo(t.position)<0.53){
+        score+=25;t.visible=false;
+      }
+    });
+    // Obstacles/hazard collision
+    obstacles.forEach((o,i)=>{
+      if(o.visible && player.position.distanceTo(o.position)<0.52){
+        health-=17;o.visible=false;
+      }
+    });
+
+    updateUI();
+
+    // End game checks
+    if(health<=0){
+      showGameOver();
+    }
+    renderer.render(scene,camera);
+  }
+
+  // UI module
+  function updateUI(){
+    document.getElementById('ui').innerHTML=
+      `Score: <span style="color:#0ff">${score}</span> | Health: <span style="color:#ffbf00">${health}</span> | SlowMo: <span style="color:#ff00cc">${slowmoLeft}</span>`;
+  }
+
+  // Game Over
+  function showGameOver(){
+    gameActive=false;
+    document.getElementById('ui').innerHTML=
+      `<b>Game Over!</b><br>Your Score: <span style="color:#0ff">${score}</span><br><button class="btn" onclick="location.reload()">Restart</button>`;
+  }
+
+  // Keyboard and touch controls
+  document.addEventListener('keydown',e=>{
+    if(!player||!gameActive)return;
+    if(e.key==='ArrowLeft'||e.key==='a'){player.position.x-=settings.moveSpeed;}
+    if(e.key==='ArrowRight'||e.key==='d'){player.position.x+=settings.moveSpeed;}
+    if((e.key==='ArrowUp'||e.key==='w')&&player.position.y<=0){velY=settings.jumpVel;}
+    if(e.key===' ' && slowmoLeft>0){slowmo=true;slowmoLeft--;}
+  });
+  document.addEventListener('keyup',e=>{
+    if(e.key===' '){slowmo=false;}
+  });
+
+  document.getElementById('btn-left').ontouchstart=()=>{if(player)player.position.x-=settings.moveSpeed;};
+  document.getElementById('btn-right').ontouchstart=()=>{if(player)player.position.x+=settings.moveSpeed;};
+  document.getElementById('btn-jump').ontouchstart=()=>{if(player&&player.position.y<=0){velY=settings.jumpVel;}};
+
+  window.addEventListener('resize',()=>{renderer.setSize(window.innerWidth,window.innerHeight);camera.aspect=window.innerWidth/window.innerHeight;camera.updateProjectionMatrix();});
+  </script>
+</body>
+</html>
